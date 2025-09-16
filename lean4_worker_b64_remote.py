@@ -268,7 +268,7 @@ def lean4worker(
             ],
             timeout=PROOF_TIMEOUT,
         )
-        response = response.decode("utf-8")
+        response = response.decode("utf-8").strip()
         response = decode_proof_code_dict(response)
 
     print(f"Worker {worker_id} terminated Lean REPL.", flush=True)
