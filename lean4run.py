@@ -42,7 +42,7 @@ DEFAULT_LAKE_PATH = f"{HOME_DIR}/.elan/bin/lake"
 
 
 # DEFAULT_LEAN_WORKSPACE="mathlib4/"
-DEFAULT_LEAN_WORKSPACE = "/home/jwyjohn/Services/lab-lean4tasks/mathlib4/"
+DEFAULT_LEAN_WORKSPACE = "/cluster/scratch/wenyjiang/mathlib4/"
 
 
 DEFAULT_IMPORTS = "import Mathlib\nimport Aesop\n\nset_option maxHeartbeats 0\n\nopen BigOperators Real Nat Topology Rat\n\n"
