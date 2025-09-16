@@ -147,7 +147,7 @@ def send_command_and_wait(
         except json.JSONDecodeError as e:
             import traceback
 
-            traceback.print_exc()
+            # traceback.print_exc()
             parsed_result = {
                 "pass": False,
                 "complete": False,
