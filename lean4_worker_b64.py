@@ -259,8 +259,8 @@ def lean4worker(
     else:
         response = check_output(
             [
-                "/Users/jwyjohn/Desktop/Projects/Terry/lean4_remote_worker/.venv/bin/python",
-                "/Users/jwyjohn/Desktop/Projects/Terry/lean4_remote_worker/lean4_run_b64.py",
+                "/home/jwyjohn/Services/lab-lean4tasks/lean4_remote_worker/.venv/bin/python",
+                "/home/jwyjohn/Services/lab-lean4tasks/lean4_remote_worker/lean4_run_b64.py",
                 encode_proof_code_dict(proof_code_dict),
             ]
         )
