@@ -1,442 +1,282 @@
-import requests
-import time
-import uuid
-import json
-from datetime import datetime
-import traceback
-from Crypto.Cipher import AES
-from base64 import b64decode, b64encode
-import os
+#!/usr/bin/env python3
+
+import multiprocessing as mp
+import signal
 import sys
 import time
-import traceback
-import pexpect
-import multiprocessing as mp
-import random
-import numpy as np
+import logging
+from typing import Dict, Optional
+from dataclasses import dataclass
+from datetime import datetime
 
 
-def split_list_randomly(lst, k):
-    random.shuffle(lst)  # Shuffle the list randomly
-    return list(
-        map(list, np.array_split(lst, k))
-    )  # Split into k approximately equal parts
+@dataclass
+class WorkerInfo:
+    process: mp.Process
+    start_time: datetime
+    restart_count: int = 0
 
 
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+class WorkerDaemon:
+    def __init__(
+        self,
+        num_workers: int = 4,
+        base_url: str = "http://localhost:5001",
+        max_restarts: int = 5,
+        restart_delay: float = 2.0,
+        max_tasks_per_worker: Optional[int] = None,
+        poll_interval: int = 2,
+    ):
 
+        self.num_workers = num_workers
+        self.base_url = base_url
+        self.max_restarts = max_restarts
+        self.restart_delay = restart_delay
+        self.max_tasks_per_worker = max_tasks_per_worker
+        self.poll_interval = poll_interval
 
-sys.path.append(os.path.abspath(os.path.join(CURRENT_DIR, "../../")))
+        self.workers: Dict[str, WorkerInfo] = {}
+        self.shutdown_requested = False
 
-
-IMPORT_TIMEOUT = 100
-# PROOF_TIMEOUT = 120
-PROOF_TIMEOUT = int(os.environ.get("PROOF_TIMEOUT", 300))
-
-HOME_DIR = os.path.expanduser("~")
-
-DEFAULT_LAKE_PATH = f"{HOME_DIR}/.elan/bin/lake"
-
-
-# DEFAULT_LEAN_WORKSPACE="mathlib4/"
-DEFAULT_LEAN_WORKSPACE = "/home/jwyjohn/Services/lab-lean4tasks/mathlib4/"
-
-
-DEFAULT_IMPORTS = "import Mathlib\nimport Aesop\n\nset_option maxHeartbeats 0\n\nopen BigOperators Real Nat Topology Rat\n\n"
-
-
-def initiate_child(imports=DEFAULT_IMPORTS):
-    # Start the Lean 4 REPL using pexpect
-    # Note: Adjust the command if necessary for your setup
-    # child = pexpect.spawn('stty -icanon', cwd=lean_workspace, encoding='utf-8', maxread=1, echo=False)
-
-    child = pexpect.spawn(
-        f"/bin/bash",
-        cwd=DEFAULT_LEAN_WORKSPACE,
-        encoding="utf-8",
-        maxread=1,
-        echo=False,
-    )
-
-    # # Uncomment the next line to see the REPL's output for debugging
-    # child.logfile = sys.stdout
-
-    child.sendline("stty -icanon")
-
-    child.sendline(f"cd {DEFAULT_LEAN_WORKSPACE}")
-
-    child.sendline(f"{DEFAULT_LAKE_PATH} exe repl")
-
-    response = send_command_and_wait(child, imports, timeout=IMPORT_TIMEOUT)
-
-    # print(f"Initializing Lean REPL: (PID: {child.pid})", flush = True)
-    # return child
-
-    return child, response
-
-
-def send_command_and_wait(
-    child,
-    command,
-    allTactics=False,
-    ast=False,
-    premises=False,
-    tactics=False,
-    env=None,
-    timeout=PROOF_TIMEOUT,
-    imports=DEFAULT_IMPORTS,
-):
-    """
-    Send a JSON command to the Lean REPL and wait for the output.
-    The REPL output is expected to be a JSON dict (possibly spanning multiple lines)
-    ending with a double newline.
-    """
-    # Build the JSON command
-    if env is None:
-        json_cmd = json.dumps({"cmd": command})
-    else:
-        json_cmd = json.dumps(
-            {
-                "cmd": command,
-                "allTactics": allTactics,
-                "ast": ast,
-                "premises": premises,
-                "tactics": tactics,
-                "env": env,
-            }
+        # Setup logging
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(levelname)s - %(message)s",
+            handlers=[
+                logging.StreamHandler(),
+                logging.FileHandler("worker_daemon.log"),
+            ],
         )
+        self.logger = logging.getLogger(__name__)
 
-    child.sendline(json_cmd)
-    child.sendline("")  # This sends the extra newline.
-    print(json_cmd)
+        # Setup signal handlers
+        signal.signal(signal.SIGINT, self._signal_handler)
+        signal.signal(signal.SIGTERM, self._signal_handler)
 
-    # import pdb; pdb.set_trace()
+    def _signal_handler(self, signum, frame):
+        """Handle shutdown signals"""
+        self.logger.info(f"Received signal {signum}, initiating shutdown...")
+        self.shutdown_requested = True
 
-    code = imports + command
-    try:
-        # Wait for the output delimiter (double newline)
-        child.expect(["\r\n\r\n", "\n\n"], timeout=timeout)
-        # pexpect.before contains everything up to the matched delimiter.
-        response = child.before.strip()
-        # print(response)
-
-        block = response
-
-        # problem_id = proof_code_list[i]["name"]
+    def _worker_target(self, worker_id: str):
+        """Target function for worker processes"""
         try:
-            result = json.loads(block)
-            # ast_results = lean4_parser(command, result['ast']) if 'ast' in result and result['ast'] else {}
-            ast_results = {}
-            parsed_result = {
-                "sorries": result.get("sorries", []),
-                "tactics": result.get("tactics", []),
-                "errors": [
-                    m
-                    for m in result.get("messages", [])
-                    if m.get("severity") == "error"
-                ],
-                "warnings": [
-                    m
-                    for m in result.get("messages", [])
-                    if m.get("severity") == "warning"
-                ],
-                "infos": [
-                    m for m in result.get("messages", []) if m.get("severity") == "info"
-                ],
-                "ast": ast_results,
-                # "verified_code": code,
-                # "problem_id": problem_id
-                "system_errors": None,
-            }
-            parsed_result["pass"] = not parsed_result["errors"]
-            parsed_result["complete"] = (
-                parsed_result["pass"]
-                and not parsed_result["sorries"]
-                and not any(
-                    "declaration uses 'sorry'" in warning["data"]
-                    or "failed" in warning["data"]
-                    for warning in parsed_result["warnings"]
-                )
+            from lean4_worker import TaskWorker  # Replace with actual import
+
+            worker = TaskWorker(worker_id=worker_id, base_url=self.base_url)
+
+            worker.run(
+                max_tasks=self.max_tasks_per_worker, poll_interval=self.poll_interval
             )
 
-        except json.JSONDecodeError as e:
-            import traceback
-
-            traceback.print_exc()
-            parsed_result = {
-                "pass": False,
-                "complete": False,
-                # "verified_code": code,
-                # "problem_id": problem_id,
-                "system_errors": f"JSONDECODE ERROR: {e}",
-            }
-
-        response = {"code": command, "compilation_result": parsed_result}
-
-    except pexpect.TIMEOUT as e:
-        response = {
-            "code": command,
-            "compilation_result": {
-                "pass": False,
-                "complete": False,
-                "system_errors": f"TIMEOUT ERROR: {e}",
-            },
-        }
-    except pexpect.EOF as e:
-        response = {
-            "code": command,
-            "compilation_result": {
-                "pass": False,
-                "complete": False,
-                "system_errors": f"EOF ERROR: {e}",
-            },
-        }
-    except Exception as e:  # Catch any other unexpected errors
-        response = {
-            "code": command,
-            "compilation_result": {
-                "pass": False,
-                "complete": False,
-                "system_errors": f"UNEXPECTED ERROR: {e}",
-            },
-        }
-    return response
-
-
-def lean4worker(
-    worker_id,
-    proof_code_dict,
-    allTactics=False,
-    ast=False,
-    premises=False,
-    tactics=False,
-    imports=DEFAULT_IMPORTS,
-):
-    """Worker function that continuously picks tasks and executes them."""
-    child, _ = initiate_child()  # Start Lean 4 REPL
-    print(f"Worker {worker_id} started Lean REPL.", flush=True)
-
-    start_time = time.time()
-
-    proof_code = proof_code_dict["code"]
-    proof_name = proof_code_dict["name"]
-
-    if len(proof_code) == 0:
-
-        response = {
-            "code": proof_code,
-            "compilation_result": {
-                "pass": False,
-                "complete": False,
-                "system_errors": None,
-            },
-        }
-
-        response["name"] = proof_name
-
-        response["verify_time"] = round(time.time() - start_time, 2)
-
-        start_time = time.time()
-
-    else:
-
-        response = send_command_and_wait(
-            child,
-            proof_code,
-            env=0,
-            allTactics=allTactics,
-            ast=ast,
-            premises=premises,
-            tactics=tactics,
-            imports=imports,
-        )  # Run proof
-
-        response["name"] = proof_name
-
-        response["verify_time"] = round(time.time() - start_time, 2)
-
-        start_time = time.time()
-
-    try:
-        child.close()
-    except Exception:
-        child.terminate(force=True)
-    print(f"Worker {worker_id} terminated Lean REPL.", flush=True)
-    return response
-
-
-aead_key = bytes.fromhex("9fb28c1637a6f4939c8c50269085cfa6")
-
-
-def aead_dec(key: bytes, encrypted_data: dict) -> dict:
-    """Decrypt data that was encrypted using AES-GCM."""
-    nonce = b64decode(encrypted_data["nonce"])
-    header = b64decode(encrypted_data["header"])
-    ciphertext = b64decode(encrypted_data["ciphertext"])
-    tag = b64decode(encrypted_data["tag"])
-
-    cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
-    cipher.update(header)
-    try:
-        decrypted_data = cipher.decrypt_and_verify(ciphertext, tag)
-        return json.loads(decrypted_data.decode("utf-8"))
-    except Exception as e:
-        traceback.print_exc()
-        print(f"Decryption failed: {str(e)}")
-        raise
-
-
-def aead_enc(key: bytes, msg: dict):
-    cipher = AES.new(key, AES.MODE_GCM)
-    header = b"terry_cscs"
-    data = json.dumps(msg).encode("utf-8")
-    cipher.update(header)
-    ciphertext, tag = cipher.encrypt_and_digest(data)
-
-    json_k = ["nonce", "header", "ciphertext", "tag"]
-    json_v = [
-        b64encode(x).decode("utf-8") for x in (cipher.nonce, header, ciphertext, tag)
-    ]
-    ret = dict(zip(json_k, json_v))
-    return ret
-
-
-def enc(msg: dict):
-    return aead_enc(aead_key, msg)
-
-
-def dec(encrypted_data: dict):
-    return aead_dec(aead_key, encrypted_data)
-
-
-class TaskWorker:
-    def __init__(self, worker_id=None, base_url="http://f00d1ab.ddns.net:5001"):
-        self.worker_id = worker_id or f"worker-{uuid.uuid4().hex[:8]}"
-        self.base_url = base_url
-        self.processed_count = 0
-
-    def get_task(self):
-        """Get next task from queue"""
-        url = f"{self.base_url}/task/get"
-        response = requests.post(url, json=enc({"worker_id": self.worker_id}))
-
-        if response.status_code == 200:
-            task_data = response.json()
-            return dec(task_data)
-        elif response.status_code == 204:
-            return None  # No tasks available
-        else:
-            raise Exception(f"Failed to get task: {response.text}")
-
-    def submit_result(self, task_id: str, result: dict):
-        """Submit task result"""
-        url = f"{self.base_url}/task/submit"
-        assert isinstance(result, dict)
-
-        payload = {
-            "worker_id": self.worker_id,
-            "task_id": task_id,
-            "task_result": result,
-        }
-
-        response = requests.post(url, json=enc(payload))
-
-        if response.status_code == 200:
-            return dec(response.json())["success"]
-        else:
-            raise Exception(f"Failed to submit result: {response.text}")
-
-    def process_task(self, task_data):
-        """Process a task - this is where the actual work happens"""
-        task_content = task_data["task_content"]
-
-        print(f"Processing task {task_data['task_id'][:8]}...")
-
-        try:
-            result = self.process_lean4_task(task_content)
-            return result
         except Exception as e:
-            return {
-                "system_errors": f"UNEXPECTED ERROR: {e}",
-                "trace": traceback.format_exc(),
-            }
+            logging.error(f"Worker {worker_id} failed: {e}")
+            raise
 
-    def process_lean4_task(self, content: dict):
-        """Process JSON-formatted task"""
-        assert isinstance(content, dict)
-        ret = lean4worker(self.worker_id, content)
-        return ret
+    def _start_worker(self, worker_id: str) -> mp.Process:
+        """Start a single worker process"""
+        process = mp.Process(
+            target=self._worker_target, args=(worker_id,), name=f"Worker-{worker_id}"
+        )
+        process.start()
+        self.logger.info(f"Started worker {worker_id} (PID: {process.pid})")
+        return process
 
-    def run(self, max_tasks=None, poll_interval=2):
-        """Main worker loop"""
-        print(f"Starting worker: {self.worker_id}")
-        print(f"Server: {self.base_url}")
-        print("-" * 50)
+    def _should_restart_worker(self, worker_id: str, worker_info: WorkerInfo) -> bool:
+        """Determine if a worker should be restarted"""
+        if worker_info.restart_count >= self.max_restarts:
+            self.logger.error(
+                f"Worker {worker_id} exceeded max restarts ({self.max_restarts})"
+            )
+            return False
+        return True
 
-        while True:
-            try:
-                # Get next task
-                task = self.get_task()
+    def _restart_worker(self, worker_id: str):
+        """Restart a failed worker"""
+        old_info = self.workers[worker_id]
 
-                if not task:
-                    # print(f"No tasks available. Waiting {poll_interval}s...")
-                    time.sleep(poll_interval)
-                    continue
+        if not self._should_restart_worker(worker_id, old_info):
+            return False
 
-                print(f"Got task: {task['task_id']}")
-                print(f"Created: {task['creation_time']}")
+        self.logger.info(
+            f"Restarting worker {worker_id} (attempt {old_info.restart_count + 1})"
+        )
 
-                # Process the task
-                result = self.process_task(task)
+        # Wait before restart to avoid rapid restart loops
+        time.sleep(self.restart_delay)
 
-                # Submit result
-                success = self.submit_result(task["task_id"], result)
+        # Start new process
+        new_process = self._start_worker(worker_id)
 
-                if success:
-                    self.processed_count += 1
-                    print(f"✓ Task completed successfully")
-                    print(f"  Result: {result}")
-                    print(f"  Total processed: {self.processed_count}")
-                else:
-                    print("✗ Failed to submit result")
+        # Update worker info
+        self.workers[worker_id] = WorkerInfo(
+            process=new_process,
+            start_time=datetime.now(),
+            restart_count=old_info.restart_count + 1,
+        )
 
-                print("-" * 30)
+        return True
 
-                # Check if we've reached max tasks
-                if max_tasks and self.processed_count >= max_tasks:
-                    print(f"Reached maximum tasks ({max_tasks}). Stopping.")
+    def start_workers(self):
+        """Start all worker processes"""
+        self.logger.info(f"Starting {self.num_workers} workers...")
+
+        for i in range(self.num_workers):
+            worker_id = f"daemon-worker-{i:02d}"
+            process = self._start_worker(worker_id)
+
+            self.workers[worker_id] = WorkerInfo(
+                process=process, start_time=datetime.now()
+            )
+
+    def monitor_workers(self):
+        """Monitor worker processes and restart failed ones"""
+        while not self.shutdown_requested:
+            dead_workers = []
+
+            for worker_id, worker_info in self.workers.items():
+                if not worker_info.process.is_alive():
+                    exit_code = worker_info.process.exitcode
+                    uptime = datetime.now() - worker_info.start_time
+
+                    self.logger.warning(
+                        f"Worker {worker_id} died (exit code: {exit_code}, "
+                        f"uptime: {uptime}, restarts: {worker_info.restart_count})"
+                    )
+
+                    dead_workers.append(worker_id)
+
+            # Restart dead workers
+            for worker_id in dead_workers:
+                if self.shutdown_requested:
                     break
 
-            except KeyboardInterrupt:
-                print("\nWorker stopped by user")
+                if not self._restart_worker(worker_id):
+                    # Remove worker that can't be restarted
+                    del self.workers[worker_id]
+                    self.logger.error(f"Permanently removing worker {worker_id}")
+
+            # Check if we have any workers left
+            if not self.workers:
+                self.logger.error("All workers have failed and cannot be restarted")
                 break
-            except Exception as e:
-                print(f"Error: {e}")
-                print(f"Waiting {poll_interval}s before retry...")
-                time.sleep(poll_interval)
+
+            time.sleep(1)  # Check every second
+
+    def shutdown_workers(self):
+        """Gracefully shutdown all workers"""
+        self.logger.info("Shutting down workers...")
+
+        # Send SIGTERM to all workers
+        for worker_id, worker_info in self.workers.items():
+            if worker_info.process.is_alive():
+                self.logger.info(f"Terminating worker {worker_id}")
+                worker_info.process.terminate()
+
+        # Wait for graceful shutdown
+        shutdown_timeout = 10
+        start_time = time.time()
+
+        while time.time() - start_time < shutdown_timeout:
+            alive_workers = [
+                worker_id
+                for worker_id, worker_info in self.workers.items()
+                if worker_info.process.is_alive()
+            ]
+
+            if not alive_workers:
+                break
+
+            time.sleep(0.5)
+
+        # Force kill any remaining workers
+        for worker_id, worker_info in self.workers.items():
+            if worker_info.process.is_alive():
+                self.logger.warning(f"Force killing worker {worker_id}")
+                worker_info.process.kill()
+                worker_info.process.join(timeout=2)
+
+    def run(self):
+        """Main daemon loop"""
+        try:
+            self.logger.info("Worker daemon starting...")
+            self.logger.info(
+                f"Configuration: {self.num_workers} workers, "
+                f"max restarts: {self.max_restarts}, "
+                f"restart delay: {self.restart_delay}s"
+            )
+
+            self.start_workers()
+            self.monitor_workers()
+
+        except KeyboardInterrupt:
+            self.logger.info("Received interrupt signal")
+        except Exception as e:
+            self.logger.error(f"Daemon error: {e}")
+        finally:
+            self.shutdown_workers()
+            self.logger.info("Worker daemon stopped")
+
+    def status(self):
+        """Print current status of all workers"""
+        print(f"Worker Daemon Status ({len(self.workers)} workers)")
+        print("-" * 60)
+
+        for worker_id, worker_info in self.workers.items():
+            status = "ALIVE" if worker_info.process.is_alive() else "DEAD"
+            uptime = datetime.now() - worker_info.start_time
+
+            print(
+                f"{worker_id:20} | {status:5} | "
+                f"PID: {worker_info.process.pid:6} | "
+                f"Restarts: {worker_info.restart_count:2} | "
+                f"Uptime: {str(uptime).split('.')[0]}"
+            )
 
 
 def main():
     import argparse
 
-    parser = argparse.ArgumentParser(description="Task Queue Worker")
-    parser.add_argument("--worker-id", help="Worker ID (default: auto-generated)")
+    parser = argparse.ArgumentParser(description="Task Worker Daemon")
     parser.add_argument(
-        "--server", default="http://f00d1ab.ddns.net:5001", help="Server URL"
+        "--workers", type=int, default=64, help="Number of worker processes"
     )
-    parser.add_argument("--max-tasks", type=int, help="Maximum tasks to process")
     parser.add_argument(
-        "--poll-interval", type=float, default=2, help="Polling interval in seconds"
+        "--base-url",
+        default="http://f00d1ab.ddns.net:5001",
+        help="Base URL for task server",
+    )
+    parser.add_argument(
+        "--max-restarts",
+        type=int,
+        default=10,
+        help="Maximum restart attempts per worker",
+    )
+    parser.add_argument(
+        "--restart-delay",
+        type=float,
+        default=2.0,
+        help="Delay between restart attempts",
+    )
+    parser.add_argument(
+        "--max-tasks", type=int, help="Maximum tasks per worker before restart"
+    )
+    parser.add_argument(
+        "--poll-interval", type=int, default=2, help="Task polling interval in seconds"
     )
 
     args = parser.parse_args()
 
-    worker = TaskWorker(worker_id=args.worker_id, base_url=args.server)
+    daemon = WorkerDaemon(
+        num_workers=args.workers,
+        base_url=args.base_url,
+        max_restarts=args.max_restarts,
+        restart_delay=args.restart_delay,
+        max_tasks_per_worker=args.max_tasks,
+        poll_interval=args.poll_interval,
+    )
 
-    try:
-        worker.run(max_tasks=args.max_tasks, poll_interval=args.poll_interval)
-    except KeyboardInterrupt:
-        print("\nShutting down worker...")
+    daemon.run()
 
 
 if __name__ == "__main__":
