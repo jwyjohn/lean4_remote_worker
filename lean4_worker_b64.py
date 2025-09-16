@@ -14,6 +14,8 @@ import pexpect
 import multiprocessing as mp
 import random
 import numpy as np
+import zlib
+from subprocess import check_output
 
 
 def split_list_randomly(lst, k):
@@ -203,6 +205,23 @@ def send_command_and_wait(
     return response
 
 
+def encode_proof_code_dict(proof_code_dict: dict):
+    ret_str = json.dumps(proof_code_dict)
+    compressed = zlib.compress(
+        ret_str.encode("utf-8"), level=9, wbits=16 + zlib.MAX_WBITS
+    )
+    compressed_b64 = b64encode(compressed).decode("utf-8")
+    return compressed_b64
+
+
+def decode_proof_code_dict(compressed_b64: str):
+    data = zlib.decompress(b64decode(compressed_b64), 16 + zlib.MAX_WBITS).decode(
+        "utf-8"
+    )
+    task_content = json.loads(data)
+    return task_content
+
+
 def lean4worker(
     worker_id,
     proof_code_dict,
@@ -213,7 +232,6 @@ def lean4worker(
     imports=DEFAULT_IMPORTS,
 ):
     """Worker function that continuously picks tasks and executes them."""
-    child, _ = initiate_child()  # Start Lean 4 REPL
     print(f"Worker {worker_id} started Lean REPL.", flush=True)
 
     start_time = time.time()
@@ -239,28 +257,16 @@ def lean4worker(
         start_time = time.time()
 
     else:
+        response = check_output(
+            [
+                "/Users/jwyjohn/Desktop/Projects/Terry/lean4_remote_worker/.venv/bin/python",
+                "/Users/jwyjohn/Desktop/Projects/Terry/lean4_remote_worker/lean4_run_b64.py",
+                encode_proof_code_dict(proof_code_dict),
+            ]
+        )
+        response = response.decode("utf-8")
+        response = decode_proof_code_dict(response)
 
-        response = send_command_and_wait(
-            child,
-            proof_code,
-            env=0,
-            allTactics=allTactics,
-            ast=ast,
-            premises=premises,
-            tactics=tactics,
-            imports=imports,
-        )  # Run proof
-
-        response["name"] = proof_name
-
-        response["verify_time"] = round(time.time() - start_time, 2)
-
-        start_time = time.time()
-
-    try:
-        child.close()
-    except Exception:
-        child.terminate(force=True)
     print(f"Worker {worker_id} terminated Lean REPL.", flush=True)
     return response
 
