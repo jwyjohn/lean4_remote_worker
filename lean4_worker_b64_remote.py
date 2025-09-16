@@ -100,7 +100,7 @@ def lean4worker(
             [
                 "ssh",
                 "euler-eth",
-                f"/cluster/home/wenyjiang/lean4workers/lean4_remote_worker/.venv/bin/python "
+                f"ssh eu-g5-016-1 /cluster/home/wenyjiang/lean4workers/lean4_remote_worker/.venv/bin/python "
                 f"/cluster/home/wenyjiang/lean4workers/lean4_remote_worker/lean4_run_b64.py "
                 f"{encode_proof_code_dict(proof_code_dict)}",
             ],
