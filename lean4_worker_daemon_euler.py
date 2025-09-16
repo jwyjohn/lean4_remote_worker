@@ -239,7 +239,7 @@ def main():
 
     parser = argparse.ArgumentParser(description="Task Worker Daemon")
     parser.add_argument(
-        "--workers", type=int, default=12, help="Number of worker processes"
+        "--workers", type=int, default=96, help="Number of worker processes"
     )
     parser.add_argument(
         "--base-url", default="http://localhost:5001", help="Base URL for task server"
