@@ -23,8 +23,8 @@ HOME_DIR = os.path.expanduser("~")
 DEFAULT_LAKE_PATH = f"{HOME_DIR}/.elan/bin/lake"
 
 
-# DEFAULT_LEAN_WORKSPACE = "/home/jwyjohn/Services/lab-lean4tasks/mathlib4/"
-DEFAULT_LEAN_WORKSPACE = "/cluster/home/wenyjiang/mathlib4/"
+DEFAULT_LEAN_WORKSPACE = "/home/jwyjohn/Services/lab-lean4tasks/mathlib4/"
+# DEFAULT_LEAN_WORKSPACE = "/cluster/home/wenyjiang/mathlib4/"
 
 
 DEFAULT_IMPORTS = "import Mathlib\nimport Aesop\n\nset_option maxHeartbeats 0\n\nopen BigOperators Real Nat Topology Rat\n\n"
@@ -261,9 +261,6 @@ def run(data: str):
 
 def main():
     inp = sys.argv[1]
-    # inp = json.dumps({"cmd": "def f := 2"})
-    # compressed = zlib.compress(inp.encode("utf-8"), level=9, wbits=16 + zlib.MAX_WBITS)
-    # compressed_b64 = b64encode(compressed).decode("utf-8")
     run(inp)
 
 

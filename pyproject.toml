@@ -10,4 +10,5 @@ dependencies = [
     "pwntools>=4.14.1",
     "pycryptodome>=3.23.0",
     "requests>=2.32.5",
+    "srsly>=2.5.1",
 ]

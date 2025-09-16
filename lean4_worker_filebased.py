@@ -1,0 +1,308 @@
+from pathlib import Path
+import requests
+import time
+import uuid
+import json
+from datetime import datetime
+import traceback
+from Crypto.Cipher import AES
+from base64 import b64decode, b64encode
+import os
+import sys
+import time
+import traceback
+import pexpect
+import multiprocessing as mp
+import random
+import numpy as np
+import zlib
+from subprocess import check_output
+
+import srsly
+
+
+def random_delay():
+    dt = random.randint(10, 15)
+    time.sleep(dt)
+
+
+def split_list_randomly(lst, k):
+    random.shuffle(lst)  # Shuffle the list randomly
+    return list(
+        map(list, np.array_split(lst, k))
+    )  # Split into k approximately equal parts
+
+
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+sys.path.append(os.path.abspath(os.path.join(CURRENT_DIR, "../../")))
+
+
+IMPORT_TIMEOUT = 100
+# PROOF_TIMEOUT = 120
+PROOF_TIMEOUT = int(os.environ.get("PROOF_TIMEOUT", 300))
+
+
+DEFAULT_IMPORTS = "import Mathlib\nimport Aesop\n\nset_option maxHeartbeats 0\n\nopen BigOperators Real Nat Topology Rat\n\n"
+
+
+def encode_proof_code_dict(proof_code_dict: dict):
+    ret_str = json.dumps(proof_code_dict)
+    compressed = zlib.compress(
+        ret_str.encode("utf-8"), level=9, wbits=16 + zlib.MAX_WBITS
+    )
+    compressed_b64 = b64encode(compressed).decode("utf-8")
+    return compressed_b64
+
+
+def decode_proof_code_dict(compressed_b64: str):
+    data = zlib.decompress(b64decode(compressed_b64), 16 + zlib.MAX_WBITS).decode(
+        "utf-8"
+    )
+    task_content = json.loads(data)
+    return task_content
+
+
+def lean4worker(
+    worker_id,
+    proof_code_dict,
+    allTactics=False,
+    ast=False,
+    premises=False,
+    tactics=False,
+    imports=DEFAULT_IMPORTS,
+):
+    """Worker function that continuously picks tasks and executes them."""
+    print(f"Worker {worker_id} started Lean REPL.", flush=True)
+
+    start_time = time.time()
+
+    proof_code = proof_code_dict["code"]
+    proof_name = proof_code_dict["name"]
+
+    if len(proof_code) == 0:
+
+        response = {
+            "code": proof_code,
+            "compilation_result": {
+                "pass": False,
+                "complete": False,
+                "system_errors": None,
+            },
+        }
+
+        response["name"] = proof_name
+
+        response["verify_time"] = round(time.time() - start_time, 2)
+
+    else:
+        fn = f"{time.time_ns()}_{uuid.uuid4()}.json.gz"
+        srsly.write_gzip_json(f"tmp/{fn}", proof_code_dict)
+        check_output(
+            [
+                "scp",
+                f"tmp/{fn}",
+                "localhost:/home/jwyjohn/Services/lab-lean4tasks/lean4_remote_worker/workspace/todo/",
+            ],
+            cwd="/home/jwyjohn/Services/lab-lean4tasks/lean4_remote_worker/",
+            timeout=10,
+        )
+        while time.time() - start_time < PROOF_TIMEOUT:
+            random_delay()
+            try:
+                check_output(
+                    [
+                        "scp",
+                        f"localhost:/home/jwyjohn/Services/lab-lean4tasks/lean4_remote_worker/workspace/done/{fn}",
+                        f"tmp/{fn}",
+                    ],
+                    cwd="/home/jwyjohn/Services/lab-lean4tasks/lean4_remote_worker/",
+                    timeout=10,
+                )
+                break
+            except:
+                continue
+        response = srsly.read_gzip_json(f"tmp/{fn}")
+        Path(f"tmp/{fn}").unlink()
+
+    print(f"Worker {worker_id} terminated Lean REPL.", flush=True)
+    return response
+
+
+aead_key = bytes.fromhex("9fb28c1637a6f4939c8c50269085cfa6")
+
+
+def aead_dec(key: bytes, encrypted_data: dict) -> dict:
+    """Decrypt data that was encrypted using AES-GCM."""
+    nonce = b64decode(encrypted_data["nonce"])
+    header = b64decode(encrypted_data["header"])
+    ciphertext = b64decode(encrypted_data["ciphertext"])
+    tag = b64decode(encrypted_data["tag"])
+
+    cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
+    cipher.update(header)
+    try:
+        decrypted_data = cipher.decrypt_and_verify(ciphertext, tag)
+        return json.loads(decrypted_data.decode("utf-8"))
+    except Exception as e:
+        traceback.print_exc()
+        print(f"Decryption failed: {str(e)}")
+        raise
+
+
+def aead_enc(key: bytes, msg: dict):
+    cipher = AES.new(key, AES.MODE_GCM)
+    header = b"terry_cscs"
+    data = json.dumps(msg).encode("utf-8")
+    cipher.update(header)
+    ciphertext, tag = cipher.encrypt_and_digest(data)
+
+    json_k = ["nonce", "header", "ciphertext", "tag"]
+    json_v = [
+        b64encode(x).decode("utf-8") for x in (cipher.nonce, header, ciphertext, tag)
+    ]
+    ret = dict(zip(json_k, json_v))
+    return ret
+
+
+def enc(msg: dict):
+    return aead_enc(aead_key, msg)
+
+
+def dec(encrypted_data: dict):
+    return aead_dec(aead_key, encrypted_data)
+
+
+class TaskWorker:
+    def __init__(self, worker_id=None, base_url="http://f00d1ab.ddns.net:5001"):
+        self.worker_id = worker_id or f"worker-{uuid.uuid4().hex[:8]}"
+        self.base_url = base_url
+        self.processed_count = 0
+
+    def get_task(self):
+        """Get next task from queue"""
+        url = f"{self.base_url}/task/get"
+        response = requests.post(url, json=enc({"worker_id": self.worker_id}))
+
+        if response.status_code == 200:
+            task_data = response.json()
+            return dec(task_data)
+        elif response.status_code == 204:
+            return None  # No tasks available
+        else:
+            raise Exception(f"Failed to get task: {response.text}")
+
+    def submit_result(self, task_id: str, result: dict):
+        """Submit task result"""
+        url = f"{self.base_url}/task/submit"
+        assert isinstance(result, dict)
+
+        payload = {
+            "worker_id": self.worker_id,
+            "task_id": task_id,
+            "task_result": result,
+        }
+
+        response = requests.post(url, json=enc(payload))
+
+        if response.status_code == 200:
+            return dec(response.json())["success"]
+        else:
+            raise Exception(f"Failed to submit result: {response.text}")
+
+    def process_task(self, task_data):
+        """Process a task - this is where the actual work happens"""
+        task_content = task_data["task_content"]
+
+        print(f"Processing task {task_data['task_id'][:8]}...")
+
+        try:
+            result = self.process_lean4_task(task_content)
+            return result
+        except Exception as e:
+            return {
+                "system_errors": f"UNEXPECTED ERROR: {e}",
+                "trace": traceback.format_exc(),
+            }
+
+    def process_lean4_task(self, content: dict):
+        """Process JSON-formatted task"""
+        assert isinstance(content, dict)
+        ret = lean4worker(self.worker_id, content)
+        return ret
+
+    def run(self, max_tasks=None, poll_interval=2):
+        """Main worker loop"""
+        print(f"Starting worker: {self.worker_id}")
+        print(f"Server: {self.base_url}")
+        print("-" * 50)
+
+        while True:
+            try:
+                # Get next task
+                task = self.get_task()
+
+                if not task:
+                    # print(f"No tasks available. Waiting {poll_interval}s...")
+                    time.sleep(poll_interval)
+                    continue
+
+                print(f"Got task: {task['task_id']}")
+                print(f"Created: {task['creation_time']}")
+
+                # Process the task
+                result = self.process_task(task)
+
+                # Submit result
+                success = self.submit_result(task["task_id"], result)
+
+                if success:
+                    self.processed_count += 1
+                    print(f"✓ Task completed successfully")
+                    print(f"  Result: {result}")
+                    print(f"  Total processed: {self.processed_count}")
+                else:
+                    print("✗ Failed to submit result")
+
+                print("-" * 30)
+
+                # Check if we've reached max tasks
+                if max_tasks and self.processed_count >= max_tasks:
+                    print(f"Reached maximum tasks ({max_tasks}). Stopping.")
+                    break
+
+            except KeyboardInterrupt:
+                print("\nWorker stopped by user")
+                break
+            except Exception as e:
+                print(f"Error: {e}")
+                print(f"Waiting {poll_interval}s before retry...")
+                time.sleep(poll_interval)
+
+
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Task Queue Worker")
+    parser.add_argument("--worker-id", help="Worker ID (default: auto-generated)")
+    parser.add_argument(
+        "--server", default="http://f00d1ab.ddns.net:5001", help="Server URL"
+    )
+    parser.add_argument("--max-tasks", type=int, help="Maximum tasks to process")
+    parser.add_argument(
+        "--poll-interval", type=float, default=2, help="Polling interval in seconds"
+    )
+
+    args = parser.parse_args()
+
+    worker = TaskWorker(worker_id=args.worker_id, base_url=args.server)
+
+    try:
+        worker.run(max_tasks=args.max_tasks, poll_interval=args.poll_interval)
+    except KeyboardInterrupt:
+        print("\nShutting down worker...")
+
+
+if __name__ == "__main__":
+    main()

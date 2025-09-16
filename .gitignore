@@ -208,3 +208,4 @@ __marimo__/
 .python-version
 .gitignore
 uv.lock
+tmp/
