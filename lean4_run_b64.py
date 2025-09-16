@@ -23,7 +23,8 @@ HOME_DIR = os.path.expanduser("~")
 DEFAULT_LAKE_PATH = f"{HOME_DIR}/.elan/bin/lake"
 
 
-DEFAULT_LEAN_WORKSPACE = "/home/jwyjohn/Services/lab-lean4tasks/mathlib4/"
+# DEFAULT_LEAN_WORKSPACE = "/home/jwyjohn/Services/lab-lean4tasks/mathlib4/"
+DEFAULT_LEAN_WORKSPACE = "/cluster/home/wenyjiang/mathlib4/"
 
 
 DEFAULT_IMPORTS = "import Mathlib\nimport Aesop\n\nset_option maxHeartbeats 0\n\nopen BigOperators Real Nat Topology Rat\n\n"
@@ -92,7 +93,7 @@ def send_command_and_wait(
 
     child.sendline(json_cmd)
     child.sendline("")  # This sends the extra newline.
-    print(json_cmd)
+    # print(json_cmd)
 
     # import pdb; pdb.set_trace()
 
@@ -247,8 +248,10 @@ def lean4worker(
 def run(data: str):
     json_str = zlib.decompress(b64decode(data), 16 + zlib.MAX_WBITS).decode("utf-8")
     task_content = json.loads(json_str)
+    # print(json_str)
     ret = lean4worker(task_content)
     ret_str = json.dumps(ret)
+    # print(ret_str)
     compressed = zlib.compress(
         ret_str.encode("utf-8"), level=9, wbits=16 + zlib.MAX_WBITS
     )

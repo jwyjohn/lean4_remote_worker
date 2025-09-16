@@ -260,10 +260,13 @@ def lean4worker(
         print(encode_proof_code_dict(proof_code_dict))
         response = check_output(
             [
-                "/home/jwyjohn/Services/lab-lean4tasks/lean4_remote_worker/.venv/bin/python",
-                "/home/jwyjohn/Services/lab-lean4tasks/lean4_remote_worker/lean4_run_b64.py",
+                "ssh",
+                "euler-tunnel",
+                "/cluster/home/wenyjiang/lean4workers/lean4_remote_worker/.venv/bin/python",
+                "/cluster/home/wenyjiang/lean4workers/lean4_remote_worker/lean4_run_b64.py",
                 encode_proof_code_dict(proof_code_dict),
-            ]
+            ],
+            timeout=PROOF_TIMEOUT,
         )
         response = response.decode("utf-8")
         response = decode_proof_code_dict(response)
