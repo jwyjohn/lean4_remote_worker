@@ -99,10 +99,10 @@ def lean4worker(
         response = check_output(
             [
                 "ssh",
-                "euler-tunnel",
-                "/cluster/home/wenyjiang/lean4workers/lean4_remote_worker/.venv/bin/python",
-                "/cluster/home/wenyjiang/lean4workers/lean4_remote_worker/lean4_run_b64.py",
-                encode_proof_code_dict(proof_code_dict),
+                "euler-eth",
+                f"/cluster/home/wenyjiang/lean4workers/lean4_remote_worker/.venv/bin/python "
+                f"/cluster/home/wenyjiang/lean4workers/lean4_remote_worker/lean4_run_b64.py "
+                f"{encode_proof_code_dict(proof_code_dict)}",
             ],
             timeout=PROOF_TIMEOUT,
         )
