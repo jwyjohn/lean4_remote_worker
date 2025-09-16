@@ -103,8 +103,8 @@ def lean4worker(proof_code_dict: dict):
         # print(encode_proof_code_dict(proof_code_dict))
         response = check_output(
             [
-                f"/home/jwyjohn/Services/lab-lean4tasks/lean4_remote_worker/.venv/bin/python",
-                f"/home/jwyjohn/Services/lab-lean4tasks/lean4_remote_worker/lean4_run_b64.py",
+                f"/cluster/home/wenyjiang/lean4workers/lean4_remote_worker/.venv/bin/python",
+                f"/cluster/home/wenyjiang/lean4workers/lean4_remote_worker/lean4_run_b64.py",
                 f"{encode_proof_code_dict(proof_code_dict)}",
             ],
             timeout=PROOF_TIMEOUT,
