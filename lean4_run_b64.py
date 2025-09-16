@@ -257,11 +257,11 @@ def run(data: str):
 
 
 def main():
-    # inp = sys.argv[1]
-    inp = json.dumps({"cmd": "def f := 2"})
-    compressed = zlib.compress(inp.encode("utf-8"), level=9, wbits=16 + zlib.MAX_WBITS)
-    compressed_b64 = b64encode(compressed).decode("utf-8")
-    run(compressed_b64)
+    inp = sys.argv[1]
+    # inp = json.dumps({"cmd": "def f := 2"})
+    # compressed = zlib.compress(inp.encode("utf-8"), level=9, wbits=16 + zlib.MAX_WBITS)
+    # compressed_b64 = b64encode(compressed).decode("utf-8")
+    run(inp)
 
 
 if __name__ == "__main__":
