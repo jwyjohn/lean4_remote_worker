@@ -14,8 +14,6 @@ import numpy as np
 import random
 from subprocess import check_output
 
-context.log_level = "DEBUG"
-
 # Constants from second file
 IMPORT_TIMEOUT = 100
 PROOF_TIMEOUT = int(os.environ.get("PROOF_TIMEOUT", 300))
@@ -521,4 +519,5 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "remote":
         main_remote()
     else:
+        context.log_level = "DEBUG"
         main()
