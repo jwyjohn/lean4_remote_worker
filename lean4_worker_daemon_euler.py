@@ -2,6 +2,15 @@
 # ssh -R 5001:localhost:5001 euler-tunnel
 # OPENBLAS_NUM_THREADS=4 uv run lean4_worker_daemon_euler.py
 
+"""
+euler-tunnel start --time=12:00:00 --ntasks=1 --cpus-per-task=96 --mem-per-cpu=2G
+ssh -R 5001:localhost:5001 euler-tunnel
+cd /cluster/home/wenyjiang/lean4workers/lean4_remote_worker
+OPENBLAS_NUM_THREADS=4 uv run lean4_worker_daemon_euler.py
+ssh -R 5001:localhost:5001 euler-tunnel "cd /cluster/home/wenyjiang/lean4workers/lean4_remote_worker && OPENBLAS_NUM_THREADS=4 uv run lean4_worker_daemon_euler.py"
+pkill -f "/cluster/home/wenyjiang/lean4workers/lean4_remote_worker/.venv/bin/python3 lean4_worker_daemon_euler.py"
+"""
+
 import multiprocessing as mp
 import signal
 import sys
