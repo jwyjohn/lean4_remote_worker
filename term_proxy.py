@@ -498,16 +498,12 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="Merged Task Worker with SSH Proxy")
-    parser.add_argument("--remote-host", default="192.168.1.78", help="Remote host")
-    parser.add_argument("--remote-user", default="user", help="Remote username")
+    # parser.add_argument("--remote-host", default="192.168.1.78", help="Remote host")
+    # parser.add_argument("--remote-user", default="user", help="Remote username")
 
     args = parser.parse_args()
 
-    proxy = HTTPProxyServer(
-        remote_host=args.remote_host,
-        remote_user=args.remote_user,
-        script_path=__file__,
-    )
+    proxy = HTTPProxyServer()
 
     proxy.run()
 
