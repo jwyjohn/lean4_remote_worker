@@ -16,13 +16,6 @@ import random
 import numpy as np
 
 
-def split_list_randomly(lst, k):
-    random.shuffle(lst)  # Shuffle the list randomly
-    return list(
-        map(list, np.array_split(lst, k))
-    )  # Split into k approximately equal parts
-
-
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
