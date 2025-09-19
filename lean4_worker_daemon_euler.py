@@ -61,7 +61,7 @@ class WorkerDaemon:
     def _worker_target(self, worker_id: str):
         """Target function for worker processes"""
         try:
-            from lean4_worker_b64_remote import TaskWorker  # Replace with actual import
+            from lean4_worker import TaskWorker  # Replace with actual import
 
             worker = TaskWorker(worker_id=worker_id, base_url=self.base_url)
 
