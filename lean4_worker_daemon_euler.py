@@ -247,7 +247,7 @@ def main():
     parser.add_argument(
         "--max-restarts",
         type=int,
-        default=500,
+        default=300,
         help="Maximum restart attempts per worker",
     )
     parser.add_argument(

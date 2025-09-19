@@ -230,7 +230,7 @@ class TaskWorkerSSH:
         """Process a task - this is where the actual work happens"""
         task_content = task_data["task_content"]
 
-        print(f"Processing task {task_data['task_id'][:8]}...")
+        print(f"Processing task {task_data['task_id'][:8]}...", flush=True)
 
         try:
             result = self.process_lean4_task(task_content)
@@ -249,23 +249,25 @@ class TaskWorkerSSH:
 
     def run(self, max_tasks: int = None, poll_interval: int = 2):
         """Main worker loop"""
-        print(f"TaskWorker {self.worker_id} started (PID: {os.getpid()})")
+        print(f"TaskWorker {self.worker_id} started (PID: {os.getpid()})", flush=True)
 
         while True:
             try:
                 # Get next task from remote server
-                print(f"TaskWorker {self.worker_id} getting task...")
+                # print(f"TaskWorker {self.worker_id} getting task...")
                 task_response = self.get_task()
 
                 if task_response.get("status_code") == 204:
                     print(
-                        f"TaskWorker {self.worker_id}: No tasks available. Waiting {poll_interval}s..."
+                        f"TaskWorker {self.worker_id}: No tasks available. Waiting {poll_interval}s...",
+                        flush=True,
                     )
                     time.sleep(poll_interval)
                     continue
                 elif task_response.get("status_code") != 200:
                     print(
-                        f"TaskWorker {self.worker_id}: Error getting task: {task_response}"
+                        f"TaskWorker {self.worker_id}: Error getting task: {task_response}",
+                        flush=True,
                     )
                     time.sleep(poll_interval)
                     continue
@@ -274,15 +276,16 @@ class TaskWorkerSSH:
                 remote_task = task_response["data"]
                 task_id = remote_task["task_id"]
 
-                print(f"TaskWorker {self.worker_id}: Got task {task_id}")
+                print(f"TaskWorker {self.worker_id}: Got task {task_id}", flush=True)
                 print(
-                    f"TaskWorker {self.worker_id}: Created: {remote_task.get('creation_time', 'unknown')}"
+                    f"TaskWorker {self.worker_id}: Created: {remote_task.get('creation_time', 'unknown')}",
+                    flush=True,
                 )
 
                 # Process the task
                 result = self.process_task(remote_task)
 
-                print(f"TaskWorker {self.worker_id}: Task completed")
+                print(f"TaskWorker {self.worker_id}: Task completed", flush=True)
 
                 # Submit result back to remote server
                 submit_response = self.submit_result(task_id, result)
@@ -292,38 +295,46 @@ class TaskWorkerSSH:
                 ):
                     self.processed_count += 1
                     print(
-                        f"TaskWorker {self.worker_id}: ✓ Result submitted successfully"
+                        f"TaskWorker {self.worker_id}: ✓ Result submitted successfully",
+                        flush=True,
                     )
-                    print(f"TaskWorker {self.worker_id}: Result: {json.dumps(result)}")
                     print(
-                        f"TaskWorker {self.worker_id}: Total processed: {self.processed_count}"
+                        f"TaskWorker {self.worker_id}: Result: {json.dumps(result)}",
+                        flush=True,
+                    )
+                    print(
+                        f"TaskWorker {self.worker_id}: Total processed: {self.processed_count}",
+                        flush=True,
                     )
                 else:
                     print(
-                        f"TaskWorker {self.worker_id}: ✗ Failed to submit result: {submit_response}"
+                        f"TaskWorker {self.worker_id}: ✗ Failed to submit result: {submit_response}",
+                        flush=True,
                     )
 
-                print("-" * 30)
+                print("-" * 30, flush=True)
 
                 # Check if we've reached max tasks
                 if max_tasks and self.processed_count >= max_tasks:
                     print(
-                        f"TaskWorker {self.worker_id}: Reached maximum tasks ({max_tasks}). Stopping."
+                        f"TaskWorker {self.worker_id}: Reached maximum tasks ({max_tasks}). Stopping.",
+                        flush=True,
                     )
                     break
 
             except KeyboardInterrupt:
-                print(f"\nTaskWorker {self.worker_id} stopped by user")
+                print(f"\nTaskWorker {self.worker_id} stopped by user", flush=True)
                 break
             except Exception as e:
-                print(f"TaskWorker {self.worker_id}: Error: {e}")
+                print(f"TaskWorker {self.worker_id}: Error: {e}", flush=True)
                 traceback.print_exc()
                 print(
-                    f"TaskWorker {self.worker_id}: Waiting {poll_interval}s before retry..."
+                    f"TaskWorker {self.worker_id}: Waiting {poll_interval}s before retry...",
+                    flush=True,
                 )
                 time.sleep(poll_interval)
 
-        print(f"TaskWorker {self.worker_id} finished")
+        print(f"TaskWorker {self.worker_id} finished", flush=True)
 
 
 def main_remote():
@@ -366,21 +377,17 @@ def main_remote():
 
 
 class HTTPProxyServer:
-    def __init__(
-        self, remote_host="192.168.1.78", remote_user="user", script_path=None
-    ):
-        self.remote_host = remote_host
-        self.remote_user = remote_user
-        self.script_path = script_path or __file__
+    def __init__(self):
+        self.script_path = __file__
         self.ssh_process = None
         self.is_running = False
 
     def start_remote_process(self):
         """SSH to remote machine and start the main process"""
         try:
-            print(f"Connecting to {self.remote_user}@{self.remote_host}")
+            print(f"Connecting to remote...")
 
-            self.ssh_process = ssh(self.remote_host, user=self.remote_user, port=22)
+            self.ssh_process = process(["ssh", "euler-tunnel"])
 
             # Transfer the script content
             script_content = open(__file__, "r").read()
@@ -418,17 +425,16 @@ class HTTPProxyServer:
             print(f"Proxy making HTTP POST to {url}")
 
             response = requests.post(url, json=json_data, timeout=30)
-
-            # Try to parse as JSON first, fall back to text
-            try:
-                response_data = response.json()
-            except:
-                response_data = {"text": response.text}
-
-            return {"status_code": response.status_code, "data": response_data}
+            if response.status_code == 200:
+                return {"status_code": response.status_code, "data": response.json()}
+            elif response.status_code == 204:
+                return {"status_code": response.status_code}
+            else:
+                assert f"HTTP {response.status_code}" == ""
 
         except Exception as e:
             print(f"HTTP request failed: {e}")
+            traceback.print_exc()
             return {"status_code": 500, "error": str(e)}
 
     def process_requests(self):
