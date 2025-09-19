@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # ssh -R 5001:localhost:5001 euler-tunnel
+# OPENBLAS_NUM_THREADS=4 uv run lean4_worker_daemon_euler.py
 
 import multiprocessing as mp
 import signal
