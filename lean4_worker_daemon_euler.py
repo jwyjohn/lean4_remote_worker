@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ssh -R 5001:localhost:5001 euler-tunnel
 
 import multiprocessing as mp
 import signal
